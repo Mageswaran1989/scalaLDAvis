@@ -1,0 +1,6 @@
+.idea/*
+project/target/*
+project/project/*
+build/project/*
+target/*
+target-local/*
