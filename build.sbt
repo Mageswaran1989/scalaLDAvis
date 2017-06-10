@@ -4,8 +4,10 @@ name := "scalaLDAVis"
 version := "0.1"
 
 unmanagedSourceDirectories in Compile += baseDirectory.value / "examples" / "src" / "scala"
-resourceDirectory in Compile := baseDirectory.value / "resources"
-resourceDirectory in Test := baseDirectory.value / "resources"
+unmanagedResources in Compile += baseDirectory.value / "resources"
+unmanagedResources in Test += baseDirectory.value / "resources"
+unmanagedResources in Runtime += baseDirectory.value / "resources"
+
 
 lazy val localRoot = Project(id = "scalaLDAVis", base = file("."))
                   .settings(BuildSettings.clusterSettings)

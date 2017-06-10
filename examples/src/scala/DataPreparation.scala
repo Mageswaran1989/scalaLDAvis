@@ -77,11 +77,9 @@ object DataPreparation extends Logger {
     log.info("Starting pipeline fit...")
     val pipeLineModel = pipeline.fit(df)
 
-
-
-    //TODO move below code to scalLDAvis
     val transformedDf = pipeLineModel.transform(df)
 
+    //TODO move below code to scalLDAvis
     val ldaModel = pipeLineModel.stages(4).asInstanceOf[LDAModel]
 
     val topicDescIndices = ldaModel.describeTopics(vocabSize).rdd.map {

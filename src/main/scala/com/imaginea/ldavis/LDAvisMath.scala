@@ -156,16 +156,18 @@ object LDAvisMath {
     val m = slicedEigenVec.toDenseMatrix
     val v = sqrt(slicedEigenVals.toDenseVector)
 
-    val res = matVecElementWiseMul(m, v)
+    val res = matVecElementWiseOp(m, v, (x,y) => x*y)
     res
 
   }
 
   //https://stackoverflow.com/questions/14881989/using-scala-breeze-to-do-numpy-style-broadcasting/14885146#14885146
-  def matVecElementWiseMul(mat: BDM[Double], vec: BDV[Double]) = {
+  def matVecElementWiseOp(mat: BDM[Double],
+                          vec: BDV[Double],
+                          op: (Double, Double)=> Double): BDM[Double] = {
     mat.mapPairs({
       case ((row, col), value) => {
-        value * vec(col)
+        op(value, vec(col))
       }
     })
   }

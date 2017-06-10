@@ -11,8 +11,9 @@ import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{LongType, StructField, StructType}
 
 import scala.collection.mutable
-
 import com.imaginea.ldavis._
+
+import scala.annotation.tailrec
 
 /**
   * Created by mageswarand on 26/4/17.
@@ -20,11 +21,9 @@ import com.imaginea.ldavis._
 
 object SparkLDAVisTest {
 
-
-
   def main(args: Array[String]): Unit = {
 
-    val sparkLDAvis = new SparkLDAvisBuilder()
+    val sparkLDAvis = new ScalaLDAvisBuilder()
       .withTrainedDF("/opt/0.imaginea/rpx/model/topic-dist") //features, topicDistribution(num_docs x K)
       .withLDAPath("/opt/0.imaginea/rpx/model/spark-lda") //topic_term_dist [k topics x V words]
       .withVocabDFPath("/opt/0.imaginea/rpx/model/vocab") //
@@ -35,7 +34,7 @@ object SparkLDAVisTest {
 }
 
 
-class SparkLDAvisBuilder extends LDAvisBuilder {
+class ScalaLDAvisBuilder extends LDAvisBuilder {
 
   override var spark: Option[SparkSession] = None
 
@@ -98,10 +97,10 @@ class SparkLDAvisBuilder extends LDAvisBuilder {
     this
   }
 
-  override def build: LDAvis = new SparkLDAvis(this)
+  override def build: LDAvis = new ScalaLDAvis(this)
 }
 
-class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
+class ScalaLDAvis(builder: ScalaLDAvisBuilder) extends LDAvis {
 
   val spark: SparkSession = builder.spark.getOrElse(SparkSession
     .builder()
@@ -111,7 +110,6 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
     .getOrCreate())
 
   import spark.implicits._
-  //  import spark.sqlContext.implicits._
 
   val sc :SparkContext = spark.sparkContext
   sc.setLogLevel("ERROR")
@@ -142,7 +140,6 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
       new DenseVector(a.toArray.zip(b.toArray).map(x => x._1 + x._2))
     ).toArray.map(_.toInt)
 
-//    implicit def arrayToVector(array: Array[Double]): BDV[Double] = new BDV[Double](array)
   val docLengths = new BDV[Double](transformedDF.select($"doc_size")
     .filter($"doc_size" > 0)
     .rdd.map(row => row(0).asInstanceOf[java.lang.Long].intValue().toDouble)
@@ -188,8 +185,9 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
                         R:Int =30) = {
 
     //[num Docs x k topics] => [k topics x num Docs] * [num Docs] => [num Docs x k topics]
-    val topicFreq: BDV[Double] = sum(
-      LDAvisMath.matVecElementWiseMul(docTopicDistMat.t, docLengths).t, Axis._0).inner
+    val topicFreq: BDV[Double] =
+      sum(LDAvisMath.matVecElementWiseOp(docTopicDistMat.t, docLengths, (x,y) => x * y).t,
+      Axis._0).inner
 
     val topicFreqSum = sum(topicFreq)
 
@@ -202,7 +200,9 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
     val topicFreqSorted       = topicFreq(topicOrder).toDenseVector
     val topicTermDistsSorted =  topicsTermDist(topicOrder, ::).toDenseMatrix
 
-    val termTopicFreq = LDAvisMath.matVecElementWiseMul(topicTermDistsSorted.t, topicFreqSorted).t
+    val termTopicFreq = LDAvisMath.matVecElementWiseOp(topicTermDistsSorted.t,
+      topicFreqSorted,
+      (x,y) => x * y).t
 
     val termFrequency: BDV[Double] = sum(termTopicFreq, Axis._0).inner
 
@@ -217,16 +217,19 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
 
     val tokenTable = getTokenTable(curatedTermIndex.distinct.sorted,
       termTopicFreq, vocab, termFrequency).drop($"TermId")
-    //    tokenTable.show(100)
 
     val topicCoordinates = getTopicCoordinates(topicTermDist = topicTermDistsSorted,
       topicProportion = topicProportion)
-    //    topicCoordinates.show(100)
 
-    val clientTopicOrder = topicOrder.map(_+1)
+    val clientTopicOrder = topicOrder.map(_+1).toArray
+
+    println("\ntopicCoordinates: \n", topicCoordinates)
+    println("\ntopicInfo: \n", topicInfo)
+    println("\ntokenTable: \n", tokenTable)
+    println("\nclientTopicOrder: \n", clientTopicOrder)
 
     PreparedData(topicCoordinates, topicInfo, tokenTable,
-      R, lambdaStep, plotOpts, clientTopicOrder.toArray).exportTo()
+      R, lambdaStep, plotOpts, clientTopicOrder).exportTo()
 
   }
 
@@ -248,45 +251,36 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
     val termPropotionSum = sum(termFrequency)
 
     //marginal distribution over terms (width of blue bars)
-    val termPropotion = termFrequency.map(_ / termPropotionSum)
+    val termPropotion: BDV[Double] = termFrequency.map(_ / termPropotionSum)
 
     // compute the distinctiveness and saliency of the terms:
     // this determines the R terms that are displayed when no topic is selected
     val topicTermDistsSum = sum(topicTermDists, Axis._0).inner
 
-    val topicGivenTerm: BDM[Double] = LDAvisMath.matVecElementWiseMul(topicTermDists, topicTermDistsSum)
+    val topicGivenTerm: BDM[Double] = LDAvisMath.matVecElementWiseOp(topicTermDists,
+      topicTermDistsSum, (x,y) => x/y)
 
-    val in = log(LDAvisMath.matVecElementWiseMul(topicGivenTerm.t, topicProportion).t)
-    //BigDecimal(_).setScale(6, BigDecimal.RoundingMode.HALF_UP).toDouble)
+    val in = log(LDAvisMath.matVecElementWiseOp(topicGivenTerm.t, topicProportion, (x,y) => x/y).t)
 
     val kernel = (topicGivenTerm :* in)
 
     val distinctiveness = sum(kernel, Axis._0)
-
-    /**
-      * Add Column Index to dataframe
-      */
-    def addColumnIndex(df: DataFrame) = spark.sqlContext.createDataFrame(
-      // Add Column index
-      df.rdd.zipWithIndex.map{case (row, columnindex) => Row.fromSeq(row.toSeq :+ columnindex)},
-      // Create schema
-      StructType(df.schema.fields :+ StructField("columnindex", LongType, false))
-    )
 
     val saliency: BV[Double] = termPropotion :* distinctiveness.inner
     import org.apache.spark.sql.types.IntegerType
 
     val zippedTermData = ZippedDefaultTermInfo(saliency.toArray, vocab, termFrequency.toArray,
       termFrequency.toArray, Array.fill(vocab.length)("Default"))
+
     val defaultTermInfo_ = sc.parallelize(zippedTermData.toDefaultTermInfoArray(R)).toDS()
       .sort($"Saliency".desc)
       .limit(R)
 
     // Add index now...
     //https://stackoverflow.com/questions/40508489/spark-add-dataframe-column-to-another-dataframe-merge-two-dataframes
-    val df1WithIndex = addColumnIndex(defaultTermInfo_.toDF())
-    val df2WithIndex = addColumnIndex(spark.range(R, 0, -1).toDF("loglift"))
-    val df3WithIndex = addColumnIndex(spark.range(R, 0, -1).toDF("logprob"))
+    val df1WithIndex = Utils.addColumnIndex(defaultTermInfo_.toDF())
+    val df2WithIndex = Utils.addColumnIndex(spark.range(R, 0, -1).toDF("loglift"))
+    val df3WithIndex = Utils.addColumnIndex(spark.range(R, 0, -1).toDF("logprob"))
 
 
     // Now time to join ...
@@ -302,54 +296,51 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
       .map(_._2)
       .take(R)
 
-    val logLift: BDM[Double] = log(LDAvisMath.matVecElementWiseMul(topicTermDists, termPropotion))
-
-//      log(
-//      topicTermDists.mapPairs({
-//        case ((row, col), value) =>
-//          value / termPropotion(col)
-//      })
-//    )
+    val logLift: BDM[Double] = log(LDAvisMath.matVecElementWiseOp(topicTermDists, termPropotion, (x,y) => x/y))
 
     val logTtd = log(topicTermDists)
 
     val lambdaSeq: Array[Double] = BigDecimal("0.00") to BigDecimal("1.0") by BigDecimal(lambdaStep) map (_.toDouble) toArray
 
-    val topTerms: BDM[Int] = findRelevanceChunks(logLift, logTtd, R, lambdaSeq)
+    val topTerms: BDM[Int] = Utils.findRelevanceChunks(logLift, logTtd, R, lambdaSeq)
 
     val topicOrderTuple = topicOrder.zipWithIndex
 
-    def getTopicDF(topicOrderTuple: Array[(Int, Int)]/*old, new*/, topTerms: BDM[Int]) = {
+    def getTopicDF(topicOrderTuple: Array[(Int, Int)]/*old, new*/,
+                   topTerms: BDM[Int]): (IndexedSeq[DataFrame], Array[Int]) = {
       assert(topicOrderTuple.length == topTerms.rows)
 
       var curatedTermIndex: Array[Int] = Array()
 
-      (0 until topTerms.rows map { case i =>
-        val (originalID, newTopicId) = topicOrderTuple(i)
-        val termIndex: IndexedSeq[Int] = topTerms(i, ::).inner.toArray.distinct.toIndexedSeq
+      val lisOfDfs = (0 until topTerms.rows).map { case currentRowIndex =>
+        val (originalID, newTopicId) = topicOrderTuple(currentRowIndex)
+        val termIndex: IndexedSeq[Int] = topTerms(currentRowIndex, ::).inner.toArray.distinct.toIndexedSeq
 
         curatedTermIndex = curatedTermIndex ++: termIndex.toArray
 
         val rows = ZippedTopicTopTermRows(
           Term = termIndex.map(vocab(_)).toArray,
-          Freq = matrixtoLoc(termTopicFreq, topicOrder, originalID, termIndex).toArray,
+          Freq = Utils.matrixtoLoc(termTopicFreq, topicOrder, originalID, termIndex).toArray,
           Total = termFrequency(termIndex).toArray,
-          logprob = matrixtoLoc(logTtd, topicOrder, originalID, termIndex).toArray,
-          loglift = matrixtoLoc(logLift, topicOrder, originalID, termIndex).toArray,
+          logprob = Utils.matrixtoLoc(logTtd, topicOrder, originalID, termIndex).toArray,
+          loglift = Utils.matrixtoLoc(logLift, topicOrder, originalID, termIndex).toArray,
           Category = Array.fill(termIndex.length)("Topic"+(newTopicId+1))
         ).toTopicTopTermRow()
 
         sc.parallelize(rows).toDF()
-      }, curatedTermIndex)
+      }
+
+      (lisOfDfs, curatedTermIndex)
     }
 
-    val (lisOfDFs: IndexedSeq[DataFrame], curatedTermIndex: Array[Int]) = getTopicDF(topicOrderTuple, topTerms.t)
+    val (lisOfDfs: IndexedSeq[DataFrame], curatedTermIndex: Array[Int]) = getTopicDF(topicOrderTuple, topTerms.t)
 
-    lisOfDFs.foreach(df => defaultTermInfo = defaultTermInfo.union(df))
+    lisOfDfs.foreach(df => defaultTermInfo = defaultTermInfo.union(df))
 
     (defaultTermInfo, defaultTermIndex ++: curatedTermIndex)
 
   }
+
 
   def getTokenTable(termIndex: Array[Int], termTopicFreq: BDM[Double],
                     vocab: Array[String], termFrequency: BDV[Double]) = {
@@ -380,8 +371,6 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
 
     val K = topicTermDist.rows
 
-    //val mdsRes = LDAvisUtil.PCoA(LDAvisUtil.squareForm(LDAvisUtil.pairNDimDistance(topicTermDist)))
-
     val mdsRes = multiDimensionScaling(topicTermDist)
 
     assert(mdsRes.rows == K)
@@ -390,57 +379,6 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
     val dfData = (0 until K).map(i => TopicCoordinates(mdsRes(i,0), mdsRes(i, 1), i+1, 1, topicProportion(i)._1 * 100))
 
     sc.parallelize(dfData).toDS()
-  }
-
-  def matrixtoLoc(matrix: BDM[Double], topicOrder: Array[Int], originalID: Int,
-                  topicIndex : IndexedSeq[Int]) : BDV[Double]= {
-
-    val zippedMatrix: Map[Int, BDV[Double]] = (0 until matrix.rows).map(i =>
-      (topicOrder(i), matrix(i, ::).inner) //GEtting row will return a Transpose
-    ).toMap
-
-    //First get for MAp and second get for option
-    val row: BDV[Double] = zippedMatrix.get(originalID).get //Access the DV
-    row(topicIndex).toDenseVector //Select only the particular row
-  }
-
-  def findRelevanceChunks(logLift: BDM[Double], logTtd: BDM[Double], R: Int, lambdaSeq: Array[Double]): BDM[Int] = {
-    val res = concat(lambdaSeq.map(findRelevance(logLift, logTtd, R, _)))
-    res
-  }
-
-  def concat(list: Array[BDM[Int]]): BDM[Int] = {
-
-    def concat_(list: Array[BDM[Int]], res: BDM[Int]): BDM[Int] = {
-      if (list.size == 0)
-        res
-      else
-        concat_(list.tail, BDM.vertcat(res,list.head))
-    }
-
-    concat_(list.tail, list.head)
-  }
-
-  def findRelevance(logLift: BDM[Double], logTtd: BDM[Double], R: Int, lambda: Double): BDM[Int] = {
-
-    val relevance = ((lambda * logTtd) + ((1 - lambda) * logLift)).t
-
-    //https://stackoverflow.com/questions/30416142/how-to-find-five-first-maximum-indices-of-each-column-in-a-matrix
-    //now we have to loop for each column
-    // prepare the matrix and get the Vector(indexes,Array[Int],Array[Int])
-
-    //Rows -> Topic or Ordered Topic
-    //Cols -> term index
-    val listsOfIndexes = for (i <- Range(0, relevance.cols))
-      yield relevance(::, i).toArray
-        .zipWithIndex
-        .sortWith((x, y) => x._1 > y._1)
-        .take(R)
-        .map(x => x._2)
-
-    //finally conver to a DenseMatrix
-
-    BDM(listsOfIndexes.map(_.toArray): _*).t
   }
 
   /**

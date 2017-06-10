@@ -37,10 +37,18 @@ class PreparedData(topicCoordinates: Dataset[TopicCoordinates], topicInfo: DataF
 
   val data = JsonData(mdsDat , tinfo , tokenTableJson , R , lambdaStep , plotOpts  , topicOrder )
 
-  def exportTo(path: String = "/tmp/scalaLDAvis/") = {
+  def exportTo(directory: String = "/tmp/scalaLDAvis/") = {
     new PrintWriter("/tmp/lda.json") { write(data.toJson.prettyPrint); close }
-    new File(path).mkdirs()
-    FileUtils.copyFile(new File(getClass.getResource("dataset/javascript/index.html").getFile), new File(path))
+    val dir = new File(directory)
+
+    if(!dir.exists()) dir.mkdirs()
+
+    val list = List("index.html", "d3.v3.js", "FileSaver.js", "ldavis.js", "lda.css").foreach {
+      file =>
+        val file1 = new File(this.getClass.getResource("javascript/"+file).getFile)
+        val file2 = new File(directory+"/"+file)
+        FileUtils.copyFile(file1, file2)
+    }
   }
 }
 
