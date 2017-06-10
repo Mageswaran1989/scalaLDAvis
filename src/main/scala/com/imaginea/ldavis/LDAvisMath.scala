@@ -4,8 +4,10 @@ import breeze.linalg.{eig, svd, DenseMatrix => BDM, DenseVector => BDV, Vector =
 import breeze.numerics._
 /**
   * Created by mageswarand on 26/4/17.
+  *
+  * Some routines are written from ground-up imitating python routines
   */
-object LDAvisUtil {
+object LDAvisMath {
 
   def klDivergence(p1: Array[Double], p2: Array[Double]): Array[Double] = {
     assert(p1.length == p2.length)
@@ -102,7 +104,6 @@ object LDAvisUtil {
     matrix
   }
 
-
   def mean(v: BV[Double]) = (v.valuesIterator.sum) / v.size
 
   def zeroMean(m: BDM[Double]) = {
@@ -114,8 +115,6 @@ object LDAvisUtil {
     }
     copy
   }
-
-
 
   def PCA(data: BDM[Double], components: Int) = {
 
@@ -157,14 +156,18 @@ object LDAvisUtil {
     val m = slicedEigenVec.toDenseMatrix
     val v = sqrt(slicedEigenVals.toDenseVector)
 
-    //https://stackoverflow.com/questions/14881989/using-scala-breeze-to-do-numpy-style-broadcasting/14885146#14885146
-    val res = m.mapPairs({
-      case ((row, col), value) => {
-        value * v(col)
-      }
-    })
+    val res = matVecElementWiseMul(m, v)
     res
 
+  }
+
+  //https://stackoverflow.com/questions/14881989/using-scala-breeze-to-do-numpy-style-broadcasting/14885146#14885146
+  def matVecElementWiseMul(mat: BDM[Double], vec: BDV[Double]) = {
+    mat.mapPairs({
+      case ((row, col), value) => {
+        value * vec(col)
+      }
+    })
   }
 
 }

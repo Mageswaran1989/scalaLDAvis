@@ -9,6 +9,8 @@ import org.apache.spark.ml.linalg.{DenseVector, Vector => MLVector}
 import org.slf4j.LoggerFactory
 import org.apache.spark.sql.functions.udf
 
+import scala.collection.mutable
+
 case class NewsData(content: String)
 
 trait Logger {
@@ -130,7 +132,7 @@ object DataPreparation extends Logger {
     val phiMatrix = topicsMatrix.transpose.rowIter.map(_.toDense.toArray).toArray
     val phiMatRdd = sc.parallelize(phiMatrix.map(_.mkString(","))).coalesce(1)
 
-    val getSize: Array[String] => Long =  _.size
+    val getSize: mutable.WrappedArray[String] => Int =  _.size
 
     val sizeUdf = udf(getSize)
 
@@ -154,7 +156,9 @@ object DataPreparation extends Logger {
     val termFreqRdd = sc.parallelize(freqArray).coalesce(1)
     val vocabRdd = sc.parallelize(vocab).coalesce(1)
 
-    val docSize =  transformedDf.select("doc_size").rdd.take(10).foreach(println)
+    val docSize =  transformedDf.
+      withColumn("doc_size", sizeUdf(transformedDf("filteredWords"))).
+      select("doc_size").rdd.take(10).foreach(println)
 
     val topicDistribution =  transformedDf.select("topicDistribution").rdd.take(10).foreach(println)
 

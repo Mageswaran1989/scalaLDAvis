@@ -14,6 +14,19 @@ case class JsonData(mdsDat: JsValue, tinfo: JsValue, `token.table`: JsValue,
                     R: Double, `lambda.step`: Double, `plot.opts`: Map[String, String],
                    `topic.order`: Array[Int])
 
+case class Rinfo(R: Int)
+case class TOinfo(topicOrder: Array[Int])
+case class LambdaStepInfo(lambda_step: Double)
+
+object customJsonProtocol extends DefaultJsonProtocol {
+  implicit val protocolRinfoJsonProtocol = jsonFormat1(Rinfo)
+  implicit val protocolTOinfo = jsonFormat1(TOinfo)
+  implicit val protocolLSInfo = jsonFormat1(LambdaStepInfo)
+  implicit val finalFormat = jsonFormat7(JsonData)
+}
+
+import customJsonProtocol._
+
 class PreparedData(topicCoordinates: Dataset[TopicCoordinates], topicInfo: DataFrame,
                    tokenTable: DataFrame, R: Int, lambdaStep: Double,
                    plotOpts: Map[String, String], topicOrder:Array[Int]) {
@@ -22,28 +35,13 @@ class PreparedData(topicCoordinates: Dataset[TopicCoordinates], topicInfo: DataF
   val tinfo = Utils.DfToJson.topicInfoToJson(topicInfo)
   val tokenTableJson = Utils.DfToJson.tokenTableToJson(tokenTable)
 
-  case class Rinfo(R: Int)
-  case class TOinfo(topicOrder: Array[Int])
-  case class LambdaStepInfo(lambda_step: Double)
-
-  object customJsonProtocol extends DefaultJsonProtocol {
-    implicit val protocolRinfoJsonProtocol = jsonFormat1(Rinfo)
-    implicit val protocolTOinfo = jsonFormat1(TOinfo)
-    implicit val protocolLSInfo = jsonFormat1(LambdaStepInfo)
-    implicit val finalFormat = jsonFormat7(JsonData)
-  }
-  import customJsonProtocol._
-
   val data = JsonData(mdsDat , tinfo , tokenTableJson , R , lambdaStep , plotOpts  , topicOrder )
 
-
   def exportTo(path: String = "/tmp/scalaLDAvis/") = {
-    new PrintWriter("/tmp/scalaLDAvis.json") { write(data.toJson.prettyPrint); close }
+    new PrintWriter("/tmp/lda.json") { write(data.toJson.prettyPrint); close }
     new File(path).mkdirs()
     FileUtils.copyFile(new File(getClass.getResource("dataset/javascript/index.html").getFile), new File(path))
   }
-
-
 }
 
 

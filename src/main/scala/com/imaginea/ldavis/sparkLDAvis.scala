@@ -19,6 +19,9 @@ import com.imaginea.ldavis._
   */
 
 object SparkLDAVisTest {
+
+
+
   def main(args: Array[String]): Unit = {
 
     val sparkLDAvis = new SparkLDAvisBuilder()
@@ -139,10 +142,11 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
       new DenseVector(a.toArray.zip(b.toArray).map(x => x._1 + x._2))
     ).toArray.map(_.toInt)
 
-  val docLengths = transformedDF.select($"doc_size")
+//    implicit def arrayToVector(array: Array[Double]): BDV[Double] = new BDV[Double](array)
+  val docLengths = new BDV[Double](transformedDF.select($"doc_size")
     .filter($"doc_size" > 0)
     .rdd.map(row => row(0).asInstanceOf[java.lang.Long].intValue().toDouble)
-    .collect() //TODO convert
+    .collect()) //TODO convert
 
   val vocabDf = spark.read.json(builder.vocabDFPath.getOrElse("/your/path/to/vocabDF"))
 
@@ -184,42 +188,39 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
                         R:Int =30) = {
 
     //[num Docs x k topics] => [k topics x num Docs] * [num Docs] => [num Docs x k topics]
-    val topicFreq = sum(docTopicDistMat.t.mapPairs({
-      case ((row, col), value) => {
-        value * docLengths(col)
-      }
-    }).t, Axis._0)
+    val topicFreq: BDV[Double] = sum(
+      LDAvisMath.matVecElementWiseMul(docTopicDistMat.t, docLengths).t, Axis._0).inner
 
     val topicFreqSum = sum(topicFreq)
 
     //Values sorted with their zipped index
-    val topicProportion = topicFreq.inner.map(_/topicFreqSum).toArray.zipWithIndex.sortBy(_._1).reverse
+    val topicProportion = topicFreq.map(_/topicFreqSum).toArray.zipWithIndex.sortBy(_._1).reverse
 
-    val topicOrder:IndexedSeq[Int]      = topicProportion.map(_._2).toIndexedSeq
+    val topicOrder:IndexedSeq[Int] = topicProportion.map(_._2).toIndexedSeq
 
-    val topicFreqSorted       = topicFreq.inner(topicOrder)
+    //slicing the vector/matrix based on indexed seq
+    val topicFreqSorted       = topicFreq(topicOrder).toDenseVector
     val topicTermDistsSorted =  topicsTermDist(topicOrder, ::).toDenseMatrix
 
-    val termTopicFreq = topicTermDistsSorted.t.mapPairs({
-      case ((row, col), value) =>
-        value * topicFreqSorted(col)
-    }).t
+    val termTopicFreq = LDAvisMath.matVecElementWiseMul(topicTermDistsSorted.t, topicFreqSorted).t
 
-    val termFrequency = sum(termTopicFreq, Axis._0)
+    val termFrequency: BDV[Double] = sum(termTopicFreq, Axis._0).inner
 
     //topicProportion is rounded to 6 decimel point
     //http://docs.oracle.com/javase/1.5.0/docs/api/java/math/RoundingMode.html#HALF_UP
     val (topicInfo, curatedTermIndex) = getTopicInfo(topicTermDistsSorted,
-      BV(topicProportion
+      new BDV(topicProportion
         .map(_._1)
         //.map(BigDecimal(_).setScale(6, BigDecimal.RoundingMode.HALF_UP).toDouble)
       ),
-      termFrequency.inner, termTopicFreq, vocab, topicOrder.toArray)
+      termFrequency, termTopicFreq, vocab, topicOrder.toArray)
 
-    val tokenTable = getTokenTable(curatedTermIndex.distinct.sorted, termTopicFreq, vocab, termFrequency.inner).drop($"TermId")
+    val tokenTable = getTokenTable(curatedTermIndex.distinct.sorted,
+      termTopicFreq, vocab, termFrequency).drop($"TermId")
     //    tokenTable.show(100)
 
-    val topicCoordinates = getTopicCoordinates(topicTermDist = topicTermDistsSorted, topicProportion = topicProportion)
+    val topicCoordinates = getTopicCoordinates(topicTermDist = topicTermDistsSorted,
+      topicProportion = topicProportion)
     //    topicCoordinates.show(100)
 
     val clientTopicOrder = topicOrder.map(_+1)
@@ -240,7 +241,7 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
     * @param R
     * @param nJobs
     */
-  def getTopicInfo(topicTermDists: BDM[Double], topicProportion: BV[Double], termFrequency: BV[Double],
+  def getTopicInfo(topicTermDists: BDM[Double], topicProportion: BDV[Double], termFrequency: BDV[Double],
                    termTopicFreq: BDM[Double], vocab: Array[String], topicOrder: Array[Int],
                    lambdaStep: Double = 0.01, R: Int = 30, nJobs: Int = 0) = {
 
@@ -251,18 +252,12 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
 
     // compute the distinctiveness and saliency of the terms:
     // this determines the R terms that are displayed when no topic is selected
-    val topicTermDistsSum = sum(topicTermDists, Axis._0)
-    val topicGivenTerm = topicTermDists.mapPairs({
-      case ((row, col), value) =>
-        value / topicTermDistsSum(col)
-    })
+    val topicTermDistsSum = sum(topicTermDists, Axis._0).inner
 
-    val in = log(topicGivenTerm.t
-      //.map(BigDecimal(_).setScale(6, BigDecimal.RoundingMode.HALF_UP).toDouble)
-      .mapPairs({
-      case ((row, col), value) =>
-        value / topicProportion(col)
-    }).t)
+    val topicGivenTerm: BDM[Double] = LDAvisMath.matVecElementWiseMul(topicTermDists, topicTermDistsSum)
+
+    val in = log(LDAvisMath.matVecElementWiseMul(topicGivenTerm.t, topicProportion).t)
+    //BigDecimal(_).setScale(6, BigDecimal.RoundingMode.HALF_UP).toDouble)
 
     val kernel = (topicGivenTerm :* in)
 
@@ -307,13 +302,14 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
       .map(_._2)
       .take(R)
 
+    val logLift: BDM[Double] = log(LDAvisMath.matVecElementWiseMul(topicTermDists, termPropotion))
 
-    val logLift: BDM[Double] = log(
-      topicTermDists.mapPairs({
-        case ((row, col), value) =>
-          value / termPropotion(col)
-      })
-    )
+//      log(
+//      topicTermDists.mapPairs({
+//        case ((row, col), value) =>
+//          value / termPropotion(col)
+//      })
+//    )
 
     val logTtd = log(topicTermDists)
 
@@ -332,27 +328,14 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
         val (originalID, newTopicId) = topicOrderTuple(i)
         val termIndex: IndexedSeq[Int] = topTerms(i, ::).inner.toArray.distinct.toIndexedSeq
 
-        //         println(originalID, newTopicId)
-        //         println(termIndex.mkString(","))
         curatedTermIndex = curatedTermIndex ++: termIndex.toArray
-
-        def matrixtoLoc(matrix: BDM[Double], topicOrder: Array[Int], originalID: Int,
-                        topicIndex : IndexedSeq[Int]) : BDV[Double]= {
-          val zippedMatrix: Map[Int, BDV[Double]] = (0 until matrix.rows).map(i =>
-            (topicOrder(i), matrix(i, ::).inner) //GEtting row will return a Transpose
-          ).toMap
-
-          //First get for MAp and second get for option
-          val row: BDV[Double] = zippedMatrix.get(originalID).get //Access the DV
-          row(topicIndex).toDenseVector //Select only the particular row
-        }
 
         val rows = ZippedTopicTopTermRows(
           Term = termIndex.map(vocab(_)).toArray,
           Freq = matrixtoLoc(termTopicFreq, topicOrder, originalID, termIndex).toArray,
           Total = termFrequency(termIndex).toArray,
-          logprob = matrixtoLoc(logTtd, topicOrder, originalID, termIndex)toArray,
-          loglift = matrixtoLoc(logLift, topicOrder, originalID, termIndex)toArray,
+          logprob = matrixtoLoc(logTtd, topicOrder, originalID, termIndex).toArray,
+          loglift = matrixtoLoc(logLift, topicOrder, originalID, termIndex).toArray,
           Category = Array.fill(termIndex.length)("Topic"+(newTopicId+1))
         ).toTopicTopTermRow()
 
@@ -368,45 +351,6 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
 
   }
 
-  def findRelevance(logLift: BDM[Double], logTtd: BDM[Double], R: Int, lambda: Double): BDM[Int] = {
-
-    val relevance = ((lambda * logTtd) + ((1 - lambda) * logLift)).t
-
-    //https://stackoverflow.com/questions/30416142/how-to-find-five-first-maximum-indices-of-each-column-in-a-matrix
-    //now we have to loop for each colum
-    // prepare the matrix and get the Vector(indexes,Array[Int],Array[Int])
-
-    //Rows -> Topic or Ordered Topic
-    //Cols -> term index
-    val listsOfIndexes = for (i <- Range(0, relevance.cols))
-      yield relevance(::, i).toArray
-        .zipWithIndex
-        .sortWith((x, y) => x._1 > y._1)
-        .take(R)
-        .map(x => x._2)
-
-    //finally conver to a DenseMatrix
-
-    BDM(listsOfIndexes.map(_.toArray): _*).t
-  }
-
-  def concat(list: Array[BDM[Int]]): BDM[Int] = {
-
-    def concat_(list: Array[BDM[Int]], res: BDM[Int]): BDM[Int] = {
-      if (list.size == 0)
-        res
-      else
-        concat_(list.tail, BDM.vertcat(res,list.head))
-    }
-
-    concat_(list.tail, list.head)
-  }
-
-  def findRelevanceChunks(logLift: BDM[Double], logTtd: BDM[Double], R: Int, lambdaSeq: Array[Double]): BDM[Int] = {
-    val res = concat(lambdaSeq.map(findRelevance(logLift, logTtd, R, _)))
-    res
-  }
-
   def getTokenTable(termIndex: Array[Int], termTopicFreq: BDM[Double],
                     vocab: Array[String], termFrequency: BDV[Double]) = {
 
@@ -414,7 +358,7 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
 
     val K = termTopicFreq.rows
 
-    def unstack(matrix: BDM[Double]): Array[TokenTable]/*Array[(Int, Int, Double, String)]*/ = {
+    def unstack(matrix: BDM[Double]): Array[TokenTable] = {
       matrix.mapPairs{
         case ((row, col), value) =>
           var option: Option[TokenTable] =
@@ -448,6 +392,57 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
     sc.parallelize(dfData).toDS()
   }
 
+  def matrixtoLoc(matrix: BDM[Double], topicOrder: Array[Int], originalID: Int,
+                  topicIndex : IndexedSeq[Int]) : BDV[Double]= {
+
+    val zippedMatrix: Map[Int, BDV[Double]] = (0 until matrix.rows).map(i =>
+      (topicOrder(i), matrix(i, ::).inner) //GEtting row will return a Transpose
+    ).toMap
+
+    //First get for MAp and second get for option
+    val row: BDV[Double] = zippedMatrix.get(originalID).get //Access the DV
+    row(topicIndex).toDenseVector //Select only the particular row
+  }
+
+  def findRelevanceChunks(logLift: BDM[Double], logTtd: BDM[Double], R: Int, lambdaSeq: Array[Double]): BDM[Int] = {
+    val res = concat(lambdaSeq.map(findRelevance(logLift, logTtd, R, _)))
+    res
+  }
+
+  def concat(list: Array[BDM[Int]]): BDM[Int] = {
+
+    def concat_(list: Array[BDM[Int]], res: BDM[Int]): BDM[Int] = {
+      if (list.size == 0)
+        res
+      else
+        concat_(list.tail, BDM.vertcat(res,list.head))
+    }
+
+    concat_(list.tail, list.head)
+  }
+
+  def findRelevance(logLift: BDM[Double], logTtd: BDM[Double], R: Int, lambda: Double): BDM[Int] = {
+
+    val relevance = ((lambda * logTtd) + ((1 - lambda) * logLift)).t
+
+    //https://stackoverflow.com/questions/30416142/how-to-find-five-first-maximum-indices-of-each-column-in-a-matrix
+    //now we have to loop for each column
+    // prepare the matrix and get the Vector(indexes,Array[Int],Array[Int])
+
+    //Rows -> Topic or Ordered Topic
+    //Cols -> term index
+    val listsOfIndexes = for (i <- Range(0, relevance.cols))
+      yield relevance(::, i).toArray
+        .zipWithIndex
+        .sortWith((x, y) => x._1 > y._1)
+        .take(R)
+        .map(x => x._2)
+
+    //finally conver to a DenseMatrix
+
+    BDM(listsOfIndexes.map(_.toArray): _*).t
+  }
+
   /**
     *
     * @param topicTermDist
@@ -455,11 +450,11 @@ class SparkLDAvis(builder: SparkLDAvisBuilder) extends LDAvis {
     */
   private def multiDimensionScaling(topicTermDist: BDM[Double])  = {
 
-    val pairDist = LDAvisUtil.pairNDimDistance(topicTermDist)
+    val pairDist = LDAvisMath.pairNDimDistance(topicTermDist)
 
-    val distMatrix = LDAvisUtil.squareForm(pairDist)
+    val distMatrix = LDAvisMath.squareForm(pairDist)
 
-    LDAvisUtil.PCoA(distMatrix)
+    LDAvisMath.PCoA(distMatrix)
   }
 
 }
