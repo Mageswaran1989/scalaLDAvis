@@ -1,8 +1,7 @@
-*/.ipynb_checkpoints/*
+examples/python/.ipynb_checkpoints/*
 .idea/*
 project/target/*
 project/project/*
-build/project/*
 target/*
 target-local/*
 */spark-warehouse/*

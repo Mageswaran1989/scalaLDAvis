@@ -1,6 +1,7 @@
 package com.imaginea.ldavis
 
 import breeze.linalg.{Axis, Transpose, sum, DenseMatrix => BDM, DenseVector => BDV, SparseVector => BSV, Vector => BV}
+import breeze.numerics.log
 import org.apache.spark.sql.types.{LongType, StructField, StructType}
 import org.apache.spark.sql.{DataFrame, Dataset, Row}
 

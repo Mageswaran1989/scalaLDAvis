@@ -1,6 +1,8 @@
 package com.imaginea.ldavis
 
+import org.apache.spark.ml.Pipeline
 import org.apache.spark.ml.clustering.LDAModel
+import org.apache.spark.ml.feature.CountVectorizerModel
 import org.apache.spark.sql.{DataFrame, Dataset, SparkSession}
 
 import scala.reflect.runtime.universe._
@@ -11,7 +13,17 @@ import scala.reflect.runtime.universe._
   */
 
 abstract class LDAvis {
-  def prepareLDAVisData(path: String,
+  /**
+    * Creates the directory if not existing and copy the necessary files for
+    * visualization.
+    *
+    * Open the 'index.html' in Firefox for the visualization to work seamlessly!
+    * @param directory Where you wanted to store the visualizations
+    * @param lambdaStep
+    * @param plotOpts
+    * @param R Number of topics to be shown on the UI. Recomended is 20 to 50
+    */
+  def prepareLDAVisData(directory: String,
                         lambdaStep: Double = 0.01,
                         plotOpts: Map[String, String] = Map("xlab" -> "PC1", "ylab" -> "PC2"),
                         R:Int =30)
@@ -21,36 +33,48 @@ case class LDAVisData()
 
 abstract class LDAvisBuilder {
 
-  //Common
-  var vocabSize: Long
-  def withVocabSize(size: Long): LDAvisBuilder
-
   //Spark Specific
-  var spark: Option[SparkSession]
+  var spark: Option[SparkSession] = None
   def withSparkSession(spark: SparkSession): LDAvisBuilder
 
-  var trainedDFPath: Option[String]
-  def withTrainedDF(path: String): LDAvisBuilder
+  //fitted or transformed or trained DataFrame that has
+  // 'topicDistribution' or equivalent column created with LDA transformer
+  var transformedDfPath: Option[String] = None
+  var transformedDf: Option[DataFrame] = None
+  var ldaOutCol: Option[String] = None //Retreived from LDA model
+  def withTransformedDfPath(path: String): LDAvisBuilder
+  def withTransformedDf(df: DataFrame): LDAvisBuilder
 
-  var ldaModel: Option[LDAModel]
+  //LDA Model - Runtime or from stored model
+  var ldaModelPath: Option[String] = None
+  var ldaModel: Option[LDAModel] = None
   def withLDAModel(model: LDAModel): LDAvisBuilder
-
-  var ldaModelPath: Option[String]
   def withLDAPath(path: String): LDAvisBuilder
 
-  var vocab: Array[String]
-  def withVocab(words: Array[String]): LDAvisBuilder
+  //CountVectorizer Model - Runtime or from stored model
+  var cvModelPath: Option[String] = None
+  var cvModel: Option[CountVectorizerModel] = None
+  var cvOutCol: Option[String] = None //Retreived from CV model
+  def withCVModel(model: CountVectorizerModel): LDAvisBuilder
+  def withCVPath(path: String): LDAvisBuilder
 
-  var vocabDFPath: Option[String]
-  def withVocabDFPath(path: String): LDAvisBuilder
+  //Vocabulary - Runtime or from stored model
+  var vocabDFPath: Option[String] = None
+  var vocab: Array[String] = Array()
+  var vocabOutCol: Option[String] = None
+  def withVocab(words: Array[String], vocabOutCol: String): LDAvisBuilder
+  def withVocabDfPath(path: String, vocabOutCol: String): LDAvisBuilder
 
-  var transformedDF: Option[DataFrame]
-  def withTransformedDF(df: DataFrame): LDAvisBuilder
+
+  //LDA pipeline runtime
+  var ldaPipeline: Option[Pipeline] = None
+  def withLDAPipeline(pipeline: Pipeline): LDAvisBuilder
 
   def build: LDAvis
 }
 
 //--------------------------------------------------------------------------------------
+//TODO find a better way to convert the columns of arrays to DataFrame
 case class DefaultTermInfo(Saliency: Double, Term: String,
                            Freq: Double, Total:Double, Category: String)
 
