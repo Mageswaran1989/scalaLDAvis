@@ -1,23 +1,18 @@
-#NOT READY YET!
-
 Scala port of https://github.com/bmabey/pyLDAvis using Apache Spark as backend
 
 ### How to build?
 TODO
 
+### With SBT
+
 # Jupyter-Scala Setup
- 
- ``` 
- git clone https://github.com/alexarchambault/jupyter-scala
- cd jupyter-scala
- ./jupyter-scala
- ```
- **Note**: Works only upto Scala 2.11_11
+ - http://blog.thedataincubator.com/2017/04/spark-2-0-on-jupyter-with-toree/
+ - https://gist.github.com/mikecroucher/b57a9e5a4c1a1a2045f30a901b186bdf
  
 # Examples
-- [Data Preparation](examples/src/scala)
-- Spark Example
- 
+- [Data Preparation](examples/src/main/scala/DataPreparation.scala)
+- [Scala LDA Visulaization](examples/src/main/scala/LDAVis.scala)
+- [pyLDAvis Code Exploration](examples/python/pyLDAvis.ipynb) 
  
  #References
  - http://www.jmlr.org/papers/volume3/blei03a/blei03a.pdf

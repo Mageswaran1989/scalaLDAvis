@@ -14,13 +14,17 @@ import scala.reflect.runtime.universe._
 
 abstract class LDAvis {
   /**
+    * Transforms the topic model distributions and related corpus data into
+    * the data structures needed for the visualization.
     * Creates the directory if not existing and copy the necessary files for
     * visualization.
-    *
     * Open the 'index.html' in Firefox for the visualization to work seamlessly!
     * @param directory Where you wanted to store the visualizations
-    * @param lambdaStep
-    * @param plotOpts
+    * @param lambdaStep Determines the interstep distance in the grid of lambda values over
+    *                    which to iterate when computing relevance.
+    *                    Default is 0.01. Recommended to be between 0.01 and 0.1.
+    * @param plotOpts Map[String, String], with keys 'xlab' and `ylab`
+    *                  Dictionary of plotting options, right now only used for the axis labels.
     * @param R Number of topics to be shown on the UI. Recomended is 20 to 50
     */
   def prepareLDAVisData(directory: String,
@@ -33,42 +37,87 @@ case class LDAVisData()
 
 abstract class LDAvisBuilder {
 
-  //Spark Specific
   var spark: Option[SparkSession] = None
+  /**
+    * Pass when you have existing SparkSession or simply leave it to run locally
+    * @param spark SparkSession
+    * @return LDAvisBuilder
+    */
   def withSparkSession(spark: SparkSession): LDAvisBuilder
 
   //fitted or transformed or trained DataFrame that has
   // 'topicDistribution' or equivalent column created with LDA transformer
   var transformedDfPath: Option[String] = None
   var transformedDf: Option[DataFrame] = None
-  var ldaOutCol: Option[String] = None //Retreived from LDA model
+  /**
+    * Offline - Load the stored fitted/transformed dataframe (i.e., pipeLineModel.transform(df))
+    * @param path Directory to the stored dataframe
+    * @return LDAvisBuilder
+    */
   def withTransformedDfPath(path: String): LDAvisBuilder
+  /**
+    * Online - Pass the fitted/transformed dataframe (i.e., pipeLineModel.transform(df))
+    * @param df Transformed dataframe with ML pipeline model
+    * @return LDAvisBuilder
+    */
   def withTransformedDf(df: DataFrame): LDAvisBuilder
 
   //LDA Model - Runtime or from stored model
   var ldaModelPath: Option[String] = None
   var ldaModel: Option[LDAModel] = None
+  /**
+    * Online - Pass the trained LDAModel
+    * @param model LDAModel
+    * @return LDAvisBuilder
+    */
   def withLDAModel(model: LDAModel): LDAvisBuilder
-  def withLDAPath(path: String): LDAvisBuilder
+  /**
+    * Offline - Load the trained LDA model
+    * @param path Directory to the stored LDAModel
+    * @return LDAvisBuilder
+    */
+  def withLDAModelPath(path: String): LDAvisBuilder
 
   //CountVectorizer Model - Runtime or from stored model
   var cvModelPath: Option[String] = None
   var cvModel: Option[CountVectorizerModel] = None
   var cvOutCol: Option[String] = None //Retreived from CV model
+  /**
+    * Online - Pass the trained CountVectorizerModel
+    * @param model CountVectorizerModel
+    * @return LDAvisBuilder
+    */
   def withCVModel(model: CountVectorizerModel): LDAvisBuilder
-  def withCVPath(path: String): LDAvisBuilder
+  /**
+    * Offline - Load the trained CountVectorizerModel model
+    * @param path Directory to the stored CountVectorizerModel
+    * @return LDAvisBuilder
+    */
+  def withCVModelPath(path: String): LDAvisBuilder
 
   //Vocabulary - Runtime or from stored model
   var vocabDFPath: Option[String] = None
   var vocab: Array[String] = Array()
-  var vocabOutCol: Option[String] = None
-  def withVocab(words: Array[String], vocabOutCol: String): LDAvisBuilder
-  def withVocabDfPath(path: String, vocabOutCol: String): LDAvisBuilder
+  /**
+    * List of all the words in the corpus used to train the model.
+    * @param words Array[String]
+    * @return LDAvisBuilder
+    */
+  def withVocab(words: Array[String]): LDAvisBuilder
+//  def withVocabDfPath(path: String): LDAvisBuilder
 
 
   //LDA pipeline runtime
-  var ldaPipeline: Option[Pipeline] = None
-  def withLDAPipeline(pipeline: Pipeline): LDAvisBuilder
+//  var ldaPipeline: Option[Pipeline] = None
+//  def withLDAPipeline(pipeline: Pipeline): LDAvisBuilder
+
+  var debugFlag: Boolean = false
+  /**
+    * Enable or Disable debug
+    * @param flag Booelan false -> Disable, true -> Enable
+    * @return
+    */
+  def withEnableDebug(flag: Boolean): LDAvisBuilder
 
   def build: LDAvis
 }

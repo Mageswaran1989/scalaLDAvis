@@ -37,7 +37,7 @@ class PreparedData(topicCoordinates: Dataset[TopicCoordinates], topicInfo: DataF
 
   val data = JsonData(mdsDat , tinfo , tokenTableJson , R , lambdaStep , plotOpts  , topicOrder )
 
-  def exportTo(directory: String = "/tmp/scalaLDAvis/") = {
+  def exportTo(directory: String = "/tmp/scalaLDAvis/scalaLDAVis") = {
     val dir = new File(directory)
     if(!dir.exists()) dir.mkdirs()
 

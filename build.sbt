@@ -1,8 +1,5 @@
 import Build._
 
-name := "scalaLDAVis"
-version := "0.1"
-
 unmanagedSourceDirectories in Compile += baseDirectory.value / "examples" / "src"
 unmanagedResourceDirectories in Compile += baseDirectory.value / "resources"
 unmanagedResources in Compile += baseDirectory.value / "resources"

@@ -4,6 +4,19 @@ import sbtassembly.AssemblyPlugin.autoImport._
 import sbtassembly.PathList
 
 object Dependencies {
+  name := "scalaLDAVis"
+  version := "0.1.0"
+
+  organization := "com.imaginea"
+
+  scalaVersion := "2.11.8"
+
+//  spName := "imaginea/scalaLDAvis"
+//
+//  sparkVersion := "2.1.0"
+//
+//  sparkComponents ++= Seq("mllib", "sql")
+
   val sparkVersion = "2.1.0"
 
   val log = "org.slf4j" % "slf4j-log4j12" % "1.7.10"
@@ -22,6 +35,9 @@ object Dependencies {
     "org.apache.spark" %% "spark-mllib" % sparkVersion)
 
   val sparkProvided = spark.map(x => x % "provided")
+
+
+
 }
 
 object BuildSettings {

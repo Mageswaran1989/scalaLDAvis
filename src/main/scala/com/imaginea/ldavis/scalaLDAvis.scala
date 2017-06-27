@@ -6,7 +6,7 @@ import org.apache.spark.SparkContext
 import org.apache.spark.ml.clustering.{LDAModel, LocalLDAModel}
 import org.apache.spark.ml.linalg.{Vector => MLVector, _}
 import org.apache.spark.sql.functions.udf
-import org.apache.spark.sql.{DataFrame, Row, SparkSession}
+import org.apache.spark.sql.{DataFrame, Dataset, Row, SparkSession}
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.types.{LongType, StructField, StructType}
 
@@ -20,29 +20,6 @@ import scala.annotation.tailrec
 /**
   * Created by mageswarand on 26/4/17.
   */
-
-object SparkLDAVisTest {
-
-  def main(args: Array[String]): Unit = {
-
-    //    val sparkLDAvis = new ScalaLDAvisBuilder()
-    //      .withTrainedDF("/opt/0.imaginea/rpx/model/topic-dist") //features, topicDistribution(num_docs x K)
-    //      .withLDAPath("/opt/0.imaginea/rpx/model/spark-lda") //topic_term_dist [k topics x V words]
-    //      .withVocabDFPath("/opt/0.imaginea/rpx/model/vocab") //
-    //      .build
-
-    val sparkLDAvis = new ScalaLDAvisBuilder()
-      .withTransformedDfPath("/opt/0.imaginea/rpx/model/scalaLDAvis/model/topic-dist") //features, topicDistribution(num_docs x K)
-      .withVocabDfPath("/opt/0.imaginea/rpx/model/scalaLDAvis/model/vocab", "filterdWords") //
-      .withLDAPath("/opt/0.imaginea/rpx/model/scalaLDAvis/model/spark-lda") //topic_term_dist [k topics x V words]
-      .withCVPath("/opt/0.imaginea/rpx/model/scalaLDAvis/model/cv-model")
-      .build
-
-    sparkLDAvis.prepareLDAVisData("/tmp/")
-  }
-}
-
-
 class ScalaLDAvisBuilder extends LDAvisBuilder {
 
   /**
@@ -56,60 +33,105 @@ class ScalaLDAvisBuilder extends LDAvisBuilder {
   }
 
   /**
-    *
-    * @param path
-    * @return
+    * Offline - Load the stored fitted/transformed dataframe (i.e., pipeLineModel.transform(df))
+    * @param path Directory to the stored dataframe
+    * @return LDAvisBuilder
     */
   override def withTransformedDfPath(path: String): LDAvisBuilder = {
     this.transformedDfPath = Some(path)
     this
   }
 
+  /**
+    * Online - Pass the fitted/transformed dataframe (i.e., pipeLineModel.transform(df))
+    * @param df Transformed dataframe with ML pipeline model
+    * @return LDAvisBuilder
+    */
   override def withTransformedDf(df: DataFrame): LDAvisBuilder  = {
     this.transformedDf = Some(df)
     this
   }
 
-  override def withLDAPath(path: String): LDAvisBuilder = {
+  /**
+    * Offline - Load the trained LDA model
+    * @param path Directory to the stored LDAModel
+    * @return LDAvisBuilder
+    */
+  override def withLDAModelPath(path: String): LDAvisBuilder = {
     this.ldaModelPath = Some(path)
     this
   }
 
+  /**
+    * Online - Pass the trained LDAModel
+    * @param model LDAModel
+    * @return LDAvisBuilder
+    */
   override def withLDAModel(model: LDAModel) = {
     this.ldaModel = Some(model)
-    this.ldaOutCol = Some(model.getTopicDistributionCol)
-    println( this.ldaOutCol )
     this
   }
 
-  override def withCVPath(path: String): LDAvisBuilder = {
+  /**
+    * Offline - Load the trained CountVectorizerModel model
+    * @param path Directory to the stored CountVectorizerModel
+    * @return LDAvisBuilder
+    */
+  override def withCVModelPath(path: String): LDAvisBuilder = {
     this.cvModelPath = Some(path)
     this
   }
 
+  /**
+    * Online - Pass the trained CountVectorizerModel
+    * @param model CountVectorizerModel
+    * @return LDAvisBuilder
+    */
   override def withCVModel(model: CountVectorizerModel): LDAvisBuilder = {
     this.cvModel = Some(model)
     this.cvOutCol = Some(model.getOutputCol)
     this
   }
 
-  override def withVocabDfPath(path: String, ldaOutCol: String): LDAvisBuilder = {
-    this.vocabDFPath = Some(path)
-    this.vocabOutCol = Some(ldaOutCol)
-    this
-  }
+//  /**
+//    * Offline -
+//    * @param path Directory to the stored Dataframe
+//    * @return LDAvisBuilder
+//    */
+//  override def withVocabDfPath(path: String): LDAvisBuilder = {
+//    this.vocabDFPath = Some(path)
+//    this
+//  }
 
-  def withVocab(words: Array[String], ldaOutCol: String): LDAvisBuilder = {
+  /**
+    * List of all the words in the corpus used to train the model.
+    * @param words Array[String]
+    * @return LDAvisBuilder
+    */
+  def withVocab(words: Array[String]): LDAvisBuilder = {
     this.vocab = words
-    this.vocabOutCol = Some(ldaOutCol)
     this
   }
 
-  def  withLDAPipeline(pipeline: Pipeline): LDAvisBuilder = {
-    this.ldaPipeline = Some(pipeline)
+//  def  withLDAPipeline(pipeline: Pipeline): LDAvisBuilder = {
+//    this.ldaPipeline = Some(pipeline)
+//    this
+//  }
+
+  /**
+    * Enable or Disable debug
+    * @param flag Booelan false -> Disable, true -> Enable
+    * @return
+    */
+  def withEnableDebug(flag: Boolean = false): LDAvisBuilder = {
+    this.debugFlag = flag
     this
   }
 
+  /**
+    * Builds the LDAvis with user provided data.
+    * @return LDAvis.  Use LDAvis.prepareLDAVisData(...) to prepare the data for visualization
+    */
   override def build: LDAvis = new ScalaLDAvis(this)
 }
 
@@ -118,7 +140,7 @@ class ScalaLDAvis(builder: ScalaLDAvisBuilder) extends LDAvis {
   val spark: SparkSession = builder.spark.getOrElse(SparkSession
     .builder()
     .appName("SparkLDAvis")
-    .master("local")
+    .master("local[4]")
     .config("spark.sql.parquet.enableVectorizedReader", "false")
     .getOrCreate())
 
@@ -146,25 +168,23 @@ class ScalaLDAvis(builder: ScalaLDAvisBuilder) extends LDAvis {
 
   //theta Matrix [num Docs x k topics]
   val transformedDFFiltered = transformedDF.
-    withColumn("doc_size", sizeUdf(transformedDF("filteredWords"))).
-    select($"doc_size", transformedDF(builder.ldaOutCol.getOrElse(ldaModel.getTopicDistributionCol))).
+    withColumn("doc_size", sizeUdf(transformedDF(cvModel.getInputCol))).
+    select($"doc_size", transformedDF(ldaModel.getTopicDistributionCol)).
     filter($"doc_size" > 0).cache()
 
-  val docTopicDist = transformedDFFiltered
-    .rdd.flatMap(x => x.get(1).asInstanceOf[MLVector].toDense.toArray)
+  transformedDFFiltered.show()
+
+  val docTopicDist = transformedDFFiltered.
+    rdd.
+    flatMap(x => x.get(1).asInstanceOf[MLVector].toDense.toArray)
 
   val docTopicDistMat = new BDM(topicsTermDist.rows, transformedDFFiltered.count().toInt, docTopicDist.collect()).t
 
-  val docLengths = new BDV[Double](transformedDF.
-    withColumn("doc_size", sizeUdf(transformedDF("filteredWords"))).
-    select($"doc_size").
-    filter($"doc_size" > 0).
+  val docLengths = new BDV[Double](transformedDFFiltered.
     rdd.map(row => row(0).asInstanceOf[java.lang.Long].intValue().toDouble).
-    collect()) //TODO convert
+    collect())
 
   val vocabDf = sc.parallelize(cvModel.vocabulary.zipWithIndex).toDF("term", "termIndex")
-
-  //  val vocabDf = spark.read.json(builder.vocabDFPath.getOrElse("/your/path/to/vocabDF"))
 
   val vocab =
     if (builder.vocab.length > 0)
@@ -202,7 +222,7 @@ class ScalaLDAvis(builder: ScalaLDAvisBuilder) extends LDAvis {
   /**
     * Transforms the topic model distributions and related corpus data into
     * the data structures needed for the visualization.
-    * @param path
+    * @param path Directory to store the visulaization data
     * @param lambdaStep Determines the interstep distance in the grid of lambda values over
                         which to iterate when computing relevance.
                         Default is 0.01. Recommended to be between 0.01 and 0.1.
@@ -228,7 +248,13 @@ class ScalaLDAvis(builder: ScalaLDAvisBuilder) extends LDAvis {
       sum(LDAvisMath.matVecElementWiseOp(docTopicDistMat.t, docLengths, (x,y) => x * y).t,
         Axis._0).inner
 
+    if(builder.debugFlag) println("docTopicDistMat\n", docTopicDistMat)
+    if(builder.debugFlag) println("docLengths\n",docLengths)
+    if(builder.debugFlag) println("topicFreq\n", topicFreq)
+
     val topicFreqSum = sum(topicFreq)
+
+    if(builder.debugFlag) println("topicFreqSum\n", topicFreqSum)
 
     //Values sorted with their zipped index
     val topicProportion = topicFreq.map(_/topicFreqSum).toArray.zipWithIndex.sortBy(_._1).reverse
@@ -238,6 +264,9 @@ class ScalaLDAvis(builder: ScalaLDAvisBuilder) extends LDAvis {
     //slicing the vector/matrix based on indexed seq
     val topicFreqSorted       = topicFreq(topicOrder).toDenseVector
     val topicTermDistsSorted =  topicsTermDist(topicOrder, ::).toDenseMatrix
+
+    if(builder.debugFlag) println("topicFreqSorted\n", topicFreqSorted)
+    if(builder.debugFlag) println("topicTermDistsSorted\n", topicTermDistsSorted)
 
     val termTopicFreq = LDAvisMath.matVecElementWiseOp(topicTermDistsSorted.t,
       topicFreqSorted,
@@ -257,18 +286,15 @@ class ScalaLDAvis(builder: ScalaLDAvisBuilder) extends LDAvis {
     val tokenTable = getTokenTable(curatedTermIndex.distinct.sorted,
       termTopicFreq, vocab, termFrequency).drop($"TermId")
 
-    val topicCoordinates = getTopicCoordinates(topicTermDist = topicTermDistsSorted,
+    val topicCoordinates: Dataset[TopicCoordinates] = getTopicCoordinates(topicTermDist = topicTermDistsSorted,
       topicProportion = topicProportion)
+
+    if(builder.debugFlag)  topicCoordinates.show()
 
     val clientTopicOrder = topicOrder.map(_+1).toArray
 
-//    println("\ntopicCoordinates: \n", topicCoordinates)
-//    println("\ntopicInfo: \n", topicInfo)
-//    println("\ntokenTable: \n", tokenTable)
-//    println("\nclientTopicOrder: \n", clientTopicOrder)
-
     PreparedData(topicCoordinates, topicInfo, tokenTable,
-      R, lambdaStep, plotOpts, clientTopicOrder).exportTo()
+      R, lambdaStep, plotOpts, clientTopicOrder).exportTo(path)
 
   }
 
@@ -407,15 +433,18 @@ class ScalaLDAvis(builder: ScalaLDAvisBuilder) extends LDAvis {
     sc.parallelize(unstack(topTopicTermsFreq)).toDS().sort($"Term", $"Topic")
   }
 
-  def getTopicCoordinates(topicTermDist: BDM[Double], topicProportion: Array[(Double, Int)]) = {
+  def getTopicCoordinates(topicTermDist: BDM[Double], topicProportion: Array[(Double, Int)]): Dataset[TopicCoordinates] = {
 
     val K = topicTermDist.rows
 
-    val mdsRes = multiDimensionScaling(topicTermDist)
+    val mdsRes: BDM[Double]  = multiDimensionScaling(topicTermDist)
+
+    if(builder.debugFlag) println("mdsRes: ", mdsRes)
 
     assert(mdsRes.rows == K)
     assert(mdsRes.cols == 2)
 
+    //Map the [K x 2] matrix to Dataframe Row with case class TopicCoordinates
     val dfData = (0 until K).map(i => TopicCoordinates(mdsRes(i,0), mdsRes(i, 1), i+1, 1, topicProportion(i)._1 * 100))
 
     sc.parallelize(dfData).toDS()
@@ -428,7 +457,7 @@ class ScalaLDAvis(builder: ScalaLDAvisBuilder) extends LDAvis {
     * @param topicTermDist
     * @return A Matrix of shape [k topics x 2]
     */
-  private def multiDimensionScaling(topicTermDist: BDM[Double])  = {
+  private def multiDimensionScaling(topicTermDist: BDM[Double]): BDM[Double]  = {
 
     val pairDist = LDAvisMath.pairNDimDistance(topicTermDist)
 
