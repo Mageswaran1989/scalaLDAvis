@@ -12,4 +12,3 @@ lazy val localRoot = Project(id = "scalaLDAVis", base = file("."))
 
 lazy val clusterRoot = Project(id = "scalaLDAVis-local", base = file("."))
   .settings(BuildSettings.intelliJSettings)
-

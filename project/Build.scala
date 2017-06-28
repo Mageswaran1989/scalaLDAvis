@@ -2,20 +2,9 @@ import sbt.Keys._
 import sbt._
 import sbtassembly.AssemblyPlugin.autoImport._
 import sbtassembly.PathList
+import sbtsparkpackage.SparkPackagePlugin.autoImport.{spIgnoreProvided, spName, sparkVersion}
 
 object Dependencies {
-  name := "scalaLDAVis"
-  version := "0.1.0"
-
-  organization := "com.imaginea"
-
-  scalaVersion := "2.11.8"
-
-//  spName := "imaginea/scalaLDAvis"
-//
-//  sparkVersion := "2.1.0"
-//
-//  sparkComponents ++= Seq("mllib", "sql")
 
   val sparkVersion = "2.1.0"
 
@@ -35,21 +24,26 @@ object Dependencies {
     "org.apache.spark" %% "spark-mllib" % sparkVersion)
 
   val sparkProvided = spark.map(x => x % "provided")
-
-
-
 }
 
 object BuildSettings {
-  val buildOrganization = "Imaginea"
-  val buildVersion = "0.1"
+  val buildVersion = "0.1.0"
   val buildScalaVersion = "2.11.8"
 
   val commonBuildSettings = Defaults.coreDefaultSettings ++ Seq(
+    name := "scalaLDAVis",
     version := buildVersion,
     scalaVersion := buildScalaVersion,
+    organization := "Imaginea",
+
+    scalaVersion := buildScalaVersion,
+    spName := "imaginea/scalaLDAvis",
+    spIgnoreProvided := true,
+    sparkVersion := Dependencies.sparkVersion,
+
     resolvers += Resolver.jcenterRepo,
     resolvers += "Sonatype Releases" at "http://oss.sonatype.org/content/repositories/releases",
+
     assemblyMergeStrategy in assembly := {
       case PathList(xs@_*) if xs.last == "UnusedStubClass.class" => MergeStrategy.first
       case x =>
